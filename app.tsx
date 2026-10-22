@@ -344,7 +344,10 @@ function LogViewer({ repo, job }: { repo: string; job: Job }) {
   const rpc = useRpc<typeof rpcContract>();
   const [data, setData] = useState<JobLog | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [follow, setFollow] = useState(true);
+  // A failed job opens on its error rather than on the cleanup at the end.
+  const failedJob = job.conclusion !== null && FAILED.includes(job.conclusion);
+  const [follow, setFollow] = useState(!failedJob);
+  const jumped = useRef(false);
   const [query, setQuery] = useState("");
   const [stepsOpen, setStepsOpen] = useState(true);
   const scroller = useRef<HTMLDivElement>(null);
@@ -389,8 +392,22 @@ function LogViewer({ repo, job }: { repo: string; job: Job }) {
 
   useEffect(() => {
     const node = scroller.current;
-    if (follow && node !== null) node.scrollTop = node.scrollHeight;
-  }, [lines, follow]);
+    if (node === null || lines === null) return;
+    if (follow) {
+      node.scrollTop = node.scrollHeight;
+      return;
+    }
+    if (!failedJob || jumped.current || query !== "") return;
+    jumped.current = true;
+    const errorLine = [...lines].reverse().find((line) => line.text.startsWith("##[error]"));
+    const target =
+      errorLine === undefined
+        ? null
+        : node.querySelector<HTMLElement>(`[data-line="${errorLine.n}"]`);
+    // Leave the lines that led to the error in view above it.
+    node.scrollTop =
+      target === null ? node.scrollHeight : target.offsetTop - node.clientHeight * 0.75;
+  }, [lines, follow, failedJob, query]);
 
   // A completed log is long; the steps list is noise once it is there.
   useEffect(() => {
@@ -516,7 +533,7 @@ function LogViewer({ repo, job }: { repo: string; job: Job }) {
         ) : (
           <div
             ref={scroller}
-            className="max-h-[28rem] overflow-auto py-1 font-mono text-[11px] leading-[1.15rem]"
+            className="relative max-h-[28rem] overflow-auto py-1 font-mono text-[11px] leading-[1.15rem]"
           >
             {data.truncated ? (
               <div className="px-3 pb-1 text-zinc-500">… earlier lines omitted</div>
@@ -525,7 +542,7 @@ function LogViewer({ repo, job }: { repo: string; job: Job }) {
               <div className="px-3 py-2 text-zinc-500">No matching lines.</div>
             ) : (
               lines.map((line) => (
-                <div key={line.n} className="flex hover:bg-zinc-900">
+                <div key={line.n} data-line={line.n} className="flex hover:bg-zinc-900">
                   <span className="w-12 shrink-0 select-none pr-3 text-right tabular-nums text-zinc-600">
                     {line.n}
                   </span>
